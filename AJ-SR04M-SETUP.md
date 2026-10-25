@@ -197,7 +197,7 @@ pulses, overflow, and stale/startup readings, in addition to the button and repl
 correlation checks:
 
 ```text
-g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp
+g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp tests/display_test.cpp
 ```
 
 The updated `button_s3` sensor firmware was uploaded successfully on COM7 with

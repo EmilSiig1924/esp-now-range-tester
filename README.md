@@ -139,6 +139,8 @@ esp-now-range-tester/
     packet.h                      Shared 20-byte packet format
     ping.h                        Button debounce and request/reply packet format
     lamp.h                        Non-blocking button lamp flash patterns
+    text_frame.h                  OLED font and 128x32 text layout
+    display.h                     Optional OLED interface
     sensor_data.h                 Distance conversion and sensor validity
     ultrasonic.h                  Background ultrasonic task interface
     ping_radio.h                  Request/reply radio queue interface
@@ -151,6 +153,7 @@ esp-now-range-tester/
     transmitter/main.cpp          Send one numbered packet every 100 ms
     receiver/main.cpp             Queue packets and print measurements
     button/main.cpp               S3 button input, lamp, and round-trip measurement
+    button/display.cpp            SSD1306 OLED driver task
     echo/main.cpp                 C6 reply with outward RSSI and turnaround time
     echo/ultrasonic.cpp            AJ-SR04M mode-1 capture with RMT
   .vscode/                        Recommended extension and editor settings
@@ -158,6 +161,7 @@ esp-now-range-tester/
   tests/ping_test.cpp             Button debounce and reply correlation checks
   tests/sensor_test.cpp           Distance conversion and stale reading checks
   tests/lamp_test.cpp             Lamp flash pattern timing checks
+  tests/display_test.cpp          OLED text placement and clipping checks
 ```
 
 Start reading `packet.h`, then `transmitter/main.cpp`, then
@@ -229,5 +233,5 @@ The statistics checks use C++17 compile-time assertions for missing packets,
 duplicates, reboot resets, and sequence wraparound. With any C++17 compiler:
 
 ```text
-g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp
+g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp tests/display_test.cpp
 ```

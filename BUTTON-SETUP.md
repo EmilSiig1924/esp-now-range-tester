@@ -113,6 +113,43 @@ the measured RTT. Pin, polarity (`lampActiveHigh`) and flash timings are in
 `include/config.h`. With the defaults, GPIO5 is HIGH when the lamp is on. The
 lamp only needs a `button_s3` reflash; the C6 and the packet format are unchanged.
 
+## Optional: 0.91" OLED screen
+
+A 0.91" 128x32 I2C OLED (SSD1306 controller, pins `GND VCC SCK SDA`) on the S3
+shows each result, so the test works without a laptop. Disconnect USB first.
+
+| OLED pin | ESP32-S3 connection |
+| --- | --- |
+| GND (may be printed `NGD`) | GND |
+| VCC | **3V3** (not 5V) |
+| SCK | GPIO9 |
+| SDA | GPIO8 |
+
+Use 3V3: many of these modules pull SDA and SCK up to their own VCC, and the S3
+pins are not 5 V tolerant. Keep the four wires short. The firmware detects the
+screen at address 0x3C or 0x3D. Without a screen it prints `DISPLAY none` and
+the button test works as before.
+
+Screen after a reply:
+
+```text
+#12  RTT 4.8 ms
+RSSI -67 / -64 dBm
+Dist 1.234 m
+OK 11/12  Lost 1
+```
+
+- Line 1: request number and round-trip time.
+- Line 2: outward RSSI (as received by the C6) / return RSSI (as received by the S3).
+- Line 3: sensor distance, or `--` and the sensor status (for example `no_echo`).
+- Line 4: replies / attempts since startup, and timeouts.
+
+After a timeout the screen shows `#13  TIMEOUT` and `No reply in 1000 ms`. The
+display is drawn by a low-priority background task, so it never delays button
+handling or the RTT measurement. If the text is upside down, set `displayFlip`
+to `true` in `include/config.h` and reflash `button_s3`. Pins are configured there
+as well.
+
 ## Flash both boards
 
 Use PlatformIO's named **Project Tasks**, not the default Upload button (the
@@ -127,6 +164,7 @@ default profile still runs the original continuous receiver).
 4. Release the button, then press it. Holding it down sends only one request.
    Each change must be stable for 30 ms. A button held during startup must be
    released before the first test. The `READY` line also shows `lamp=GPIO5`.
+   A `DISPLAY` line reports whether the OLED was found.
 
 The project sets `upload_port` and `monitor_port` to **COM7 for the S3** and
 **COM3 for the C6** in `platformio.ini`. Close the monitor before uploading. If necessary, hold BOOT,
@@ -201,7 +239,7 @@ Compile-time checks cover contact bounce, held-button suppression, a button held
 during startup, wrong sessions/IDs, and replies at the timeout boundary:
 
 ```text
-g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp
+g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp tests/display_test.cpp
 ```
 
 `tests/lamp_test.cpp` covers the lamp's flash counts, on/off timing, and a new

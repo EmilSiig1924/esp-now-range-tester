@@ -1,13 +1,28 @@
 #ifdef RANGE_BUTTON
 #include "config.h"
+#include "display.h"
 #include "lamp.h"
 #include "ping_radio.h"
 #include <cinttypes>
+#include <cstdarg>
 #include <cstdio>
 #include "driver/gpio.h"
 #include "esp_now.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+
+// Format one 21-character OLED line; longer text is cut off at the screen edge.
+__attribute__((format(printf, 3, 4)))
+static void setLine(ScreenText& screen, int line, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vsnprintf(screen.line[line], sizeof(screen.line[line]), format, args);
+    va_end(args);
+}
+
+static void setTotals(ScreenText& screen, uint32_t replies, uint32_t attempts, uint32_t timeouts) {
+    setLine(screen, 3, "OK %" PRIu32 "/%" PRIu32 "  Lost %" PRIu32, replies, attempts, timeouts);
+}
 
 extern "C" void app_main() {
     static_assert(config::buttonGpio >= 0 && config::buttonGpio < 49, "Invalid S3 GPIO");
@@ -34,6 +49,7 @@ extern "C" void app_main() {
     lampOutput.intr_type = GPIO_INTR_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&lampOutput));
     ESP_ERROR_CHECK(gpio_set_level(lampPin, lampLevel(false)));
+    startDisplay();
 
     startPingRadio("BUTTON INITIATOR", PingType::reply);
     const uint8_t broadcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -60,6 +76,10 @@ extern "C" void app_main() {
     printf("READY | button=GPIO%d | COM=GND NO=GPIO%d | lamp=GPIO%d | release then press | timeout_ms=%" PRIu32 "\n",
            config::buttonGpio, config::buttonGpio, config::lampGpio, config::pingTimeoutMs);
     fflush(stdout);
+    ScreenText screen;
+    setLine(screen, 0, "ESP-NOW ping  READY");
+    setLine(screen, 1, "Press the button");
+    showScreen(screen);
 
     while (true) {
         PingEvent event{};
@@ -91,6 +111,18 @@ extern "C" void app_main() {
                    pingQueueDrops(), event.mac[0], event.mac[1], event.mac[2],
                    event.mac[3], event.mac[4], event.mac[5]);
             fflush(stdout);
+
+            screen = ScreenText{};
+            setLine(screen, 0, "#%" PRIu32 "  RTT %.1f ms", pending.sequence, rttUs / 1000.0);
+            setLine(screen, 1, "RSSI %" PRId32 " / %" PRId32 " dBm", event.packet.outwardRssi, event.rssi);
+            if (event.packet.sensorStatus == SensorStatus::ok) {
+                setLine(screen, 2, "Dist %" PRIu32 ".%03" PRIu32 " m",
+                        event.packet.distanceMm / 1000, event.packet.distanceMm % 1000);
+            } else {
+                setLine(screen, 2, "Dist -- %s", sensorStatusName(event.packet.sensorStatus));
+            }
+            setTotals(screen, replies, attempts, timeouts);
+            showScreen(screen);
         }
 
         const int64_t nowUs = esp_timer_get_time();
@@ -105,6 +137,12 @@ extern "C" void app_main() {
                    pending.sequence, config::pingTimeoutMs, attempts, replies, timeouts,
                    localErrors, pingQueueDrops());
             fflush(stdout);
+
+            screen = ScreenText{};
+            setLine(screen, 0, "#%" PRIu32 "  TIMEOUT", pending.sequence);
+            setLine(screen, 1, "No reply in %" PRIu32 " ms", config::pingTimeoutMs);
+            setTotals(screen, replies, attempts, timeouts);
+            showScreen(screen);
         }
         updateLamp(nowUs);
         if (!debouncer.update(gpio_get_level(buttonPin) == 0, nowUs,
@@ -130,6 +168,13 @@ extern "C" void app_main() {
             printf("SEND_ERROR id=%" PRIu32 " error=%s local_errors=%" PRIu32 "\n",
                    sequence, esp_err_to_name(result), localErrors);
             fflush(stdout);
+
+            screen = ScreenText{};
+            setLine(screen, 0, "#%" PRIu32 "  SEND ERROR", sequence);
+            setLine(screen, 1, "%s", esp_err_to_name(result));
+            setLine(screen, 2, "Send errors %" PRIu32, localErrors);
+            setTotals(screen, replies, attempts, timeouts);
+            showScreen(screen);
         }
         updateLamp(esp_timer_get_time()); // Light at once rather than on the next poll.
     }
