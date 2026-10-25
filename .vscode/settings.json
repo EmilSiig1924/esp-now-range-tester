@@ -1,0 +1,4 @@
+{
+  "files.associations": { "*.h": "cpp" },
+  "files.exclude": { "**/.pio": true }
+}

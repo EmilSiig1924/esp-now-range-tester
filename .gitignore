@@ -1,0 +1,7 @@
+.pio/
+sdkconfig.*
+!sdkconfig.defaults
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+__pycache__/
