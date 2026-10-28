@@ -50,6 +50,20 @@ constexpr bool rejectUnrelatedAndLateReplies() {
     return !PendingPing{}.matches(reply, 2000, 1000000);
 }
 
+constexpr bool toggleSchedule() {
+    PingSchedule schedule;
+    if (schedule.due(0, false, 500000)) return false;         // Stopped until pressed.
+    if (!schedule.toggle() || !schedule.due(0, false, 500000)) return false; // First ping at once.
+    schedule.sent(1000);
+    if (schedule.due(400000, false, 500000)) return false;    // Interval not yet elapsed.
+    if (schedule.due(501000, true, 500000)) return false;     // Still awaiting a reply.
+    if (!schedule.due(501000, false, 500000)) return false;
+    schedule.sent(501000);
+    if (schedule.toggle() || schedule.due(5000000, false, 500000)) return false; // Stopped.
+    return schedule.toggle() && schedule.due(5000001, false, 500000); // Restart pings at once.
+}
+
+static_assert(toggleSchedule(), "Toggle starts and stops paced pings");
 static_assert(buttonBounceAndHold(), "Bounce and held-button suppression");
 static_assert(heldDuringBoot(), "Require release after booting with button held");
 static_assert(rejectUnrelatedAndLateReplies(), "Reply correlation and timeout boundary");

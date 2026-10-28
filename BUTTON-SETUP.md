@@ -1,8 +1,10 @@
 # Button-triggered ESP-NOW test
 
-The S3 starts a test when you press its button. The C6 replies, and the S3 prints
-the round-trip latency and signal strength in each direction. These profiles
-send no continuous range-test traffic and do not need manually entered MAC
+The S3's button toggles testing: press once to start, press again to stop. While
+running, the S3 sends a request every 500 ms; the C6 replies, and the S3 prints
+the round-trip latency and signal strength in each direction. A new request is
+only sent once the previous one has had its reply or timed out. These profiles
+send no traffic while stopped and do not need manually entered MAC
 addresses. Run only one echo board at a time: requests are broadcast, and the
 first matching reply completes the test. Replies are unicast to the S3.
 
@@ -102,13 +104,14 @@ label `5` or `IO5`, not the fifth header pin.
 
 | Lamp | Meaning |
 | --- | --- |
-| Off | Idle, ready for a press |
-| Steady on | Request sent, waiting for the reply (often too short to see at close range) |
-| One 0.4 s flash after the press | `PONG`: reply received |
+| Off | Stopped; press to start |
+| Steady blink, twice a second | Running; each 0.15 s flash is one `PONG` reply |
+| Steady on for about 1 s | Waiting for a reply that has not arrived yet |
 | Three short flashes | `TIMEOUT`: no matching reply within 1 s |
 | Six rapid flashes | `SEND_ERROR`: the S3 could not queue the request |
 
-A `BUSY` press does not change the lamp. The lamp is cosmetic: it never changes
+A healthy link looks like an even blink; at the edge of range the rhythm breaks
+up into long on periods and triple flashes. The lamp is cosmetic: it never changes
 the measured RTT. Pin, polarity (`lampActiveHigh`) and flash timings are in
 `include/config.h`. With the defaults, GPIO5 is HIGH when the lamp is on. The
 lamp only needs a `button_s3` reflash; the C6 and the packet format are unchanged.
@@ -144,7 +147,9 @@ OK 11/12  Lost 1
 - Line 3: sensor distance, or `--` and the sensor status (for example `no_echo`).
 - Line 4: replies / attempts since startup, and timeouts.
 
-After a timeout the screen shows `#13  TIMEOUT` and `No reply in 1000 ms`. The
+After a timeout the screen shows `#13  TIMEOUT` and `No reply in 1000 ms`.
+Pressing the button shows `RUNNING` until the first result, and `STOPPED` with
+the totals after stopping. The
 display is drawn by a low-priority background task, so it never delays button
 handling or the RTT measurement. If the text is upside down, set `displayFlip`
 to `true` in `include/config.h` and reflash `button_s3`. Pins are configured there
@@ -161,9 +166,11 @@ default profile still runs the original continuous receiver).
    **Upload**. The C6 can then run from a USB power bank.
 3. Reconnect the S3 and open **button_s3 > Monitor**, at **115200 baud**, on its
    COM port. You should see `READY | button=GPIO4 ...`.
-4. Release the button, then press it. Holding it down sends only one request.
-   Each change must be stable for 30 ms. A button held during startup must be
-   released before the first test. The `READY` line also shows `lamp=GPIO5`.
+4. Press and release the button to start: the S3 prints `RUN start` and a `PONG`
+   or `TIMEOUT` line every 500 ms. Press again to stop; it prints `RUN stop` with
+   the totals. Holding the button down counts as one press. Each change must be
+   stable for 30 ms, and a button held during startup must be released before it
+   counts. The `READY` line also shows `lamp=GPIO5`.
    A `DISPLAY` line reports whether the OLED was found.
 
 The project sets `upload_port` and `monitor_port` to **COM7 for the S3** and
@@ -215,8 +222,8 @@ PONG id=1 rtt_ms=4.800 outward_rssi=-67 dBm return_rssi=-64 dBm remote_turnaroun
 `TIMEOUT` means a matching reply did not arrive within 1000 ms. It does not say
 which direction failed. Late, duplicate, and unrelated replies are ignored.
 There are no application retries. The radio may retry unicast replies at the
-MAC layer, which is part of the measured latency. A press during an outstanding
-test prints `BUSY`; release and press again after completion or timeout.
+MAC layer, which is part of the measured latency. If you stop while a request
+is outstanding, its reply or timeout is still printed and counted.
 
 This is application round-trip latency, including Wi-Fi scheduling, queueing,
 remote processing, and radio transmission. It is not radio-only flight time,
@@ -225,7 +232,8 @@ one-way delay. The first exchange can include extra peer-registration work on th
 C6. The protocol is unencrypted; its magic, session, and ID prevent accidental
 mix-ups, not malicious interference.
 
-The configurable GPIO, debounce time, timeout, and shared radio channel live in
+The configurable GPIO, debounce time, ping interval (`pingIntervalMs`), timeout,
+and shared radio channel live in
 `include/config.h`. Rebuild and upload the affected board after changing them;
 upload both after changing channel or packet format.
 
@@ -236,7 +244,8 @@ PlatformIO ESP-IDF platform. The compile-time checks below passed with the
 installed ESP32-S3 C++ compiler.
 
 Compile-time checks cover contact bounce, held-button suppression, a button held
-during startup, wrong sessions/IDs, and replies at the timeout boundary:
+during startup, start/stop toggling and ping pacing, wrong sessions/IDs, and
+replies at the timeout boundary:
 
 ```text
 g++ -std=c++17 -fsyntax-only -I include tests/statistics_test.cpp tests/ping_test.cpp tests/sensor_test.cpp tests/lamp_test.cpp tests/display_test.cpp

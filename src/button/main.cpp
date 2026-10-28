@@ -60,8 +60,10 @@ extern "C" void app_main() {
     const bool initiallyPressed = gpio_get_level(buttonPin) == 0;
     ButtonDebouncer debouncer{initiallyPressed, initiallyPressed, esp_timer_get_time()};
     PendingPing pending;
-    // Steady while a request is outstanding; then one long flash for a reply,
-    // short flashes for a timeout, and rapid flashes for a local send error.
+    PingSchedule schedule;
+    // Steady while a request is outstanding; then one short flash per reply
+    // (a steady blink while running), short flashes for a timeout, and rapid
+    // flashes for a local send error. Off when stopped.
     LampBlinker blinker;
     bool lampOn = false;
     const auto updateLamp = [&](int64_t nowUs) {
@@ -71,14 +73,26 @@ extern "C" void app_main() {
         gpio_set_level(lampPin, lampLevel(on));
     };
     constexpr int64_t timeoutUs = config::pingTimeoutMs * 1000LL;
+    constexpr int64_t intervalUs = config::pingIntervalMs * 1000LL;
+    static_assert(config::lampReplyFlashMs < config::pingIntervalMs, "Reply flashes must not merge");
     TickType_t pollTicks = pdMS_TO_TICKS(10);
     if (pollTicks == 0) pollTicks = 1;
-    printf("READY | button=GPIO%d | COM=GND NO=GPIO%d | lamp=GPIO%d | release then press | timeout_ms=%" PRIu32 "\n",
-           config::buttonGpio, config::buttonGpio, config::lampGpio, config::pingTimeoutMs);
+    printf("READY | button=GPIO%d | COM=GND NO=GPIO%d | lamp=GPIO%d | press to start/stop"
+           " | interval_ms=%" PRIu32 " timeout_ms=%" PRIu32 "\n",
+           config::buttonGpio, config::buttonGpio, config::lampGpio,
+           config::pingIntervalMs, config::pingTimeoutMs);
     fflush(stdout);
     ScreenText screen;
+    // A result arriving after a stop updates the stopped screen's totals instead.
+    const auto showStopped = [&] {
+        screen = ScreenText{};
+        setLine(screen, 0, "STOPPED");
+        setLine(screen, 1, "Press to start");
+        setTotals(screen, replies, attempts, timeouts);
+        showScreen(screen);
+    };
     setLine(screen, 0, "ESP-NOW ping  READY");
-    setLine(screen, 1, "Press the button");
+    setLine(screen, 1, "Press to start");
     showScreen(screen);
 
     while (true) {
@@ -112,6 +126,10 @@ extern "C" void app_main() {
                    event.mac[3], event.mac[4], event.mac[5]);
             fflush(stdout);
 
+            if (!schedule.running) {
+                showStopped();
+                continue;
+            }
             screen = ScreenText{};
             setLine(screen, 0, "#%" PRIu32 "  RTT %.1f ms", pending.sequence, rttUs / 1000.0);
             setLine(screen, 1, "RSSI %" PRId32 " / %" PRId32 " dBm", event.packet.outwardRssi, event.rssi);
@@ -138,26 +156,42 @@ extern "C" void app_main() {
                    localErrors, pingQueueDrops());
             fflush(stdout);
 
-            screen = ScreenText{};
-            setLine(screen, 0, "#%" PRIu32 "  TIMEOUT", pending.sequence);
-            setLine(screen, 1, "No reply in %" PRIu32 " ms", config::pingTimeoutMs);
-            setTotals(screen, replies, attempts, timeouts);
-            showScreen(screen);
+            if (schedule.running) {
+                screen = ScreenText{};
+                setLine(screen, 0, "#%" PRIu32 "  TIMEOUT", pending.sequence);
+                setLine(screen, 1, "No reply in %" PRIu32 " ms", config::pingTimeoutMs);
+                setTotals(screen, replies, attempts, timeouts);
+                showScreen(screen);
+            } else {
+                showStopped();
+            }
+        }
+        if (debouncer.update(gpio_get_level(buttonPin) == 0, nowUs,
+                             config::buttonDebounceMs * 1000LL)) {
+            // An outstanding request still completes and is counted after a stop.
+            if (schedule.toggle()) {
+                printf("RUN start | interval_ms=%" PRIu32 "\n", config::pingIntervalMs);
+                screen = ScreenText{};
+                setLine(screen, 0, "RUNNING");
+                setLine(screen, 1, "Press again to stop");
+                setTotals(screen, replies, attempts, timeouts);
+                showScreen(screen);
+            } else {
+                printf("RUN stop | attempts=%" PRIu32 " replies=%" PRIu32 " timeouts=%" PRIu32
+                       " local_errors=%" PRIu32 "\n", attempts, replies, timeouts, localErrors);
+                showStopped();
+            }
+            fflush(stdout);
         }
         updateLamp(nowUs);
-        if (!debouncer.update(gpio_get_level(buttonPin) == 0, nowUs,
-                              config::buttonDebounceMs * 1000LL)) continue;
-        if (pending.active) {
-            printf("BUSY | wait for reply or timeout, then release and press again\n");
-            fflush(stdout);
-            continue;
-        }
+        if (!schedule.due(nowUs, pending.active, intervalUs)) continue;
 
         PingPacket request{};
         request.session = session;
         request.sequence = ++sequence;
         ++attempts;
         pending = PendingPing{true, session, sequence, esp_timer_get_time()};
+        schedule.sent(pending.startedAtUs);
         const esp_err_t result = esp_now_send(broadcast,
             reinterpret_cast<const uint8_t*>(&request), sizeof(request));
         if (result != ESP_OK) {

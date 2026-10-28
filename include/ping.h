@@ -40,6 +40,28 @@ struct ButtonDebouncer {
     }
 };
 
+// Each press toggles continuous pinging. While running, a request is due
+// immediately after starting, then one interval after the previous request,
+// but never while an earlier request still awaits its reply or timeout.
+struct PingSchedule {
+    bool running = false;
+    bool sentThisRun = false;
+    int64_t lastSentUs = 0;
+
+    constexpr bool toggle() {
+        running = !running;
+        sentThisRun = false;
+        return running;
+    }
+    constexpr bool due(int64_t nowUs, bool awaitingReply, int64_t intervalUs) const {
+        return running && !awaitingReply && (!sentThisRun || nowUs - lastSentUs >= intervalUs);
+    }
+    constexpr void sent(int64_t nowUs) {
+        sentThisRun = true;
+        lastSentUs = nowUs;
+    }
+};
+
 struct PendingPing {
     bool active = false;
     uint32_t session = 0;
